@@ -1,0 +1,46 @@
+version: 2
+
+# Inputs of this project: the curated tables written by `python pipeline.py`.
+#
+# They are one table per snapshot date and dataset, named
+#   curated."<YYYYMMDD>_<source>_<dataset>"      e.g. curated."20260901_crm_participants"
+# and their names change with every pipeline run, so they cannot be declared as static dbt
+# sources. Staging reads them through the macro `curated_source('<dataset>')`, which unions all
+# curated tables of a dataset using the list in `meta.curation_log` (declared below).
+#
+# Datasets (source system, curated table suffix):
+#   trainings              catalog   (course catalog, nested `modules` kept in payload_json)
+#   participants           crm
+#   enrollments            crm
+#   progress_events        lxp
+#   survey_responses       lxp
+#   coach_betreuungsliste  excel     (manually maintained coach workbook, sheet Betreuung)
+#
+# A curated table holds the rows of one raw load: the first load is complete, later loads only
+# contain new or changed records (high watermark). The same source ID can therefore appear in
+# several tables. Rows are cleaned and flagged but never de-duplicated in the curated layer;
+# staging de-duplicates deterministically (macro `dedupe_latest`).
+#
+# Curated columns used by staging: the clean typed columns, the `*_raw` audit columns (only
+# where no clean value exists), lineage (`raw_run_id`, `raw_ingested_at`, `snapshot_date`,
+# `source_as_of_date`, `source_row_number`, `payload_hash`) and the row-level quality columns
+# (`quality_flags`, `validation_status`, `is_quarantined`).
+sources:
+  - name: meta
+    description: Pipeline bookkeeping written by the Python pipeline (schema `meta`).
+    schema: meta
+    tables:
+      - name: curation_log
+        description: >
+          One row per snapshot date and dataset: the curated table that currently exists, the raw
+          load it was built from and its row counts. Authoritative list of the curated tables.
+        meta:
+          source_system: pipeline
+          grain: one row per snapshot_date and dataset
+          known_limitations: >
+            Hard deletes at the source are not detected by the pipeline, so staging sets
+            is_deleted to false for every record.
+        columns:
+          - name: dataset
+          - name: curated_table
+          - name: snapshot_date

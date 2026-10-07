@@ -1,0 +1,37 @@
+name: stackfuel
+version: "1.0.0"
+config-version: 2
+profile: stackfuel
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+analysis-paths: ["analyses"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # KPI cutoff ("Stichtag"). Every report is evaluated as of this date.
+  reporting_date: "2026-08-31"
+  # Business date of the source extracts ("Datenstand"; the coach workbook says "Stand 01.09.2026").
+  data_as_of_date: "2026-09-01"
+  # An active enrollment is "behind schedule" when completed_module_share - time_progress_share
+  # is at or below this value (>= 15 percentage points behind the planned time).
+  behind_schedule_threshold: -0.15
+
+models:
+  stackfuel:
+    +on_schema_change: fail
+    staging:
+      +materialized: table
+      +schema: staging
+    intermediate:
+      +materialized: table
+      +schema: intermediate
+    marts:
+      +materialized: table
+      +schema: marts
+    reporting:
+      +materialized: table
+      +schema: reporting

@@ -1,0 +1,17 @@
+# Project-local profile (use with `dbt --profiles-dir .` or DBT_PROFILES_DIR=.).
+#
+# The database is the persistent DuckDB file written by `python pipeline.py`; dbt reads the
+# raw curated relations from it and writes staging/intermediate/marts/reporting next to them.
+# The path is relative to the directory dbt is started in (`dbt/`); the Makefile passes an
+# absolute STACKFUEL_DUCKDB_PATH. There is no in-memory database.
+stackfuel:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('STACKFUEL_DUCKDB_PATH', '../db/duckdb/stackfuel.duckdb') }}"
+      schema: staging
+      threads: 4
+      settings:
+        # Timestamp-to-date casts must not depend on the machine's local time zone.
+        TimeZone: UTC

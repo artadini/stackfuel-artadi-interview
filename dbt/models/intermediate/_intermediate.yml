@@ -1,0 +1,279 @@
+version: 2
+
+# Intermediate = reusable joins/aggregations. Rules: aggregate one-to-many relations (events,
+# feedback, coach rows) BEFORE joining them to a coarser grain; every join between two
+# row-level relations is many-to-one; every model has a grain test.
+
+models:
+  - name: int_enrollment_progress
+    description: |
+      Curriculum progress per enrollment.
+      - **Grain / key**: one row per `enrollment_id`.
+      - **Sources**: `stg_crm__enrollments`, `stg_lxp__training_modules`, `stg_lxp__progress_events` (valid, non-deleted rows; events up to the reporting date, UTC day).
+      - **Definition**: `completed_module_count` = distinct `module_id` with `event_type = 'module_completed'` that belong to the enrollment's training; `total_module_count` = modules of that training; share = completed / total.
+      - **Missing values**: an enrollment without any progress event has `completed_module_count = 0` and `completed_module_share = 0` (documented choice, not NULL). The share is NULL only when the training has no modules.
+      - **Fan-out**: events are aggregated per enrollment in one step; all joins are many-to-one.
+      - **Limitations**: events of modules outside the enrollment's training are ignored for the count.
+    columns:
+      - name: enrollment_id
+        description: Enrollment (grain).
+        data_tests: [not_null, unique]
+      - name: training_id
+        description: Booked training.
+      - name: total_module_count
+        description: Number of curriculum modules of the training.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0}
+      - name: completed_module_count
+        description: Distinct completed modules of the enrollment's training.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0}
+      - name: completed_module_share
+        description: completed / total modules (0 to 1); NULL when the training has no modules.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: progress_event_count
+        description: Number of valid progress events up to the reporting date.
+      - name: first_event_at_utc
+        description: UTC instant of the first progress event; NULL without events.
+      - name: last_event_at_utc
+        description: UTC instant of the last progress event; NULL without events.
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+
+  - name: int_enrollment_time_progress
+    description: |
+      Time progress versus curriculum progress per enrollment.
+      - **Grain / key**: one row per `enrollment_id`.
+      - **Sources**: `stg_crm__enrollments`, `int_enrollment_progress`.
+      - **Definition** (active enrollments only, status `aktiv`): `elapsed_days` = reporting date - cohort start; `planned_duration_days` = planned end - cohort start; `time_progress_share` = elapsed / planned, clamped to 0..1; `progress_gap` = completed_module_share - time_progress_share.
+      - **Behind schedule**: `progress_gap <= -0.15` (var `behind_schedule_threshold`), i.e. curriculum progress is at least 15 percentage points lower than elapsed planned time.
+      - **Missing values**: time columns are NULL for non-active enrollments and for missing/invalid dates; `time_progress_quality_flag` exposes why (`missing_dates`, `non_positive_planned_duration`, `cohort_not_started`, `past_planned_end`, `ok`).
+      - **Limitations**: current status only; 36 active enrollments are past their planned end and therefore have time progress 1.
+    columns:
+      - name: enrollment_id
+        description: Enrollment (grain).
+        data_tests: [not_null, unique]
+      - name: training_id
+        description: Booked training.
+      - name: status
+        description: Current enrollment status.
+      - name: is_active
+        description: True when status is `aktiv`.
+      - name: cohort_start_date
+        description: Start date of the cohort.
+      - name: planned_end_date
+        description: Planned end date.
+      - name: elapsed_days
+        description: Days from cohort start to the reporting date (active enrollments only; negative before the start).
+      - name: planned_duration_days
+        description: Planned days from cohort start to planned end (active enrollments only).
+      - name: time_progress_share
+        description: elapsed_days / planned_duration_days clamped to 0..1; NULL when not computable.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: time_progress_quality_flag
+        description: ok, cohort_not_started, past_planned_end, missing_dates or non_positive_planned_duration (NULL for non-active enrollments).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [ok, cohort_not_started, past_planned_end, missing_dates, non_positive_planned_duration]
+      - name: total_module_count
+        description: Modules of the training.
+      - name: completed_module_count
+        description: Distinct completed modules.
+      - name: completed_module_share
+        description: Curriculum progress 0..1.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: progress_gap
+        description: completed_module_share - time_progress_share (negative = behind the plan).
+      - name: is_behind_schedule
+        description: True when progress_gap <= -0.15; NULL when not computable.
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+
+  - name: int_feedback_nps
+    description: |
+      Net Promoter Score inputs per training and quarter.
+      - **Grain / key**: one row per (`training_id`, `feedback_quarter`).
+      - **Sources**: `stg_lxp__survey_responses`, `stg_crm__enrollments`, `stg_lxp__trainings`.
+      - **Population**: `survey_type = 'abschlussfeedback'`, `question_key = 'nps'`, valid whole-number scores 0..10, submitted on or before the reporting date (UTC day), enrollment and training known.
+      - **Categories**: promoter 9-10, passive 7-8, detractor 0-6. `nps = 100 * (promoters - detractors) / valid responses`.
+      - **Quarter**: UTC quarter of `submitted_at_utc` (no Berlin reporting date is required).
+      - **Missing / invalid values**: empty, non-numeric and out-of-range answers are excluded (not counted as zero); NPS is NULL when there is no valid response.
+      - **Limitations**: 8 otherwise valid answers submitted on 2026-09-01 are after the cutoff and excluded.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [training_id, feedback_quarter]
+    columns:
+      - name: training_id
+        description: Training of the answering enrollment.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_lxp__trainings')
+                field: training_id
+      - name: feedback_quarter
+        description: First day of the UTC calendar quarter of the submission.
+        data_tests: [not_null]
+      - name: feedback_quarter_label
+        description: Quarter label such as 2026-Q1.
+      - name: valid_response_count
+        description: Valid NPS answers in the group.
+      - name: promoter_count
+        description: Valid answers 9-10.
+      - name: passive_count
+        description: Valid answers 7-8.
+      - name: detractor_count
+        description: Valid answers 0-6.
+      - name: nps
+        description: Net Promoter Score in percent, -100 to 100.
+        data_tests:
+          - value_between:
+              arguments: {min_value: -100, max_value: 100}
+
+  - name: int_coach_assignment_matches
+    description: |
+      Coach workbook rows validated against CRM enrollments.
+      - **Grain / key**: one row per (`coach_assignment_id`, `snapshot_date`).
+      - **Sources**: `stg_coach__assignments`, `stg_crm__enrollments` (many-to-one lookup).
+      - **Matching**: taken from the pipeline (`matched`, `ambiguous`, `unmatched`). Ambiguous and unmatched rows are **not** forced into an enrollment; `matched_enrollment_id` is only set for confident assignments (matched and the enrollment exists).
+      - **Snapshot**: `is_latest_snapshot` marks the newest snapshot day. `snapshot_date` is the pipeline day; the workbook's business date is `coach_snapshot_as_of_date` (2026-09-01) and differs from the KPI cutoff 2026-08-31 (`snapshot_mismatch_flag`, documented limitation).
+      - **Conflicts**: `has_conflicting_coach` is true when different coaches claim one enrollment in a snapshot.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [coach_assignment_id, snapshot_date]
+    columns:
+      - name: coach_assignment_id
+        description: Technical workbook row ID.
+        data_tests: [not_null]
+      - name: snapshot_date
+        description: '{{ doc("col_snapshot_date") }}'
+        data_tests: [not_null]
+      - name: coach
+        description: Coach name (`unknown` when empty).
+      - name: training_id
+        description: Training derived from the workbook text; NULL when unmatched or ambiguous.
+      - name: cohort_start_date
+        description: Cohort start from the workbook.
+      - name: ampel
+        description: green, yellow, red or unknown.
+      - name: last_contact_date
+        description: Last coach contact.
+      - name: match_status
+        description: matched, ambiguous or unmatched.
+      - name: match_method
+        description: Matching rule that produced the status.
+      - name: matched_participant_id
+        description: Matched CRM participant (matched rows only).
+      - name: matched_enrollment_id
+        description: Matched enrollment; NULL unless the assignment is confident.
+      - name: is_confident_assignment
+        description: matched and the enrollment exists in the valid CRM data.
+      - name: enrollment_status
+        description: Current CRM status of the matched enrollment.
+      - name: enrollment_training_id
+        description: Training of the matched enrollment (may differ from the workbook training).
+      - name: is_active_or_paused
+        description: Matched enrollment has status aktiv or pausiert.
+      - name: is_red
+        description: Ampel is red.
+      - name: business_key_duplicate_flag
+        description: Row shares its business key with other rows (monitored, not an error).
+      - name: assignment_rows_for_enrollment
+        description: Number of confident rows of the snapshot that claim the same enrollment.
+      - name: has_conflicting_coach
+        description: Different coaches claim the same enrollment in the snapshot.
+      - name: is_latest_snapshot
+        description: Row belongs to the newest snapshot day.
+      - name: latest_snapshot_date
+        description: Newest snapshot day available.
+      - name: coach_snapshot_as_of_date
+        description: Business date of the workbook ("Stand").
+      - name: snapshot_mismatch_flag
+        description: True when the workbook date differs from the reporting date (2026-09-01 vs 2026-08-31).
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+      - name: run_id
+        description: '{{ doc("col_run_id") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: is_quarantined
+        description: '{{ doc("col_is_quarantined") }}'
+
+  - name: int_active_enrollments
+    description: |
+      Active enrollments (`status = 'aktiv'`).
+      - **Grain / key**: one row per `enrollment_id`.
+      - **Source**: `stg_crm__enrollments` (valid, non-deleted).
+      - **Definition**: active = current CRM status `aktiv`. CRM keeps no status history, so the state at the reporting date is approximated by the current status; flags show enrollments where that approximation is weak.
+      - **Limitations**: counts enrollments, not distinct participants (some participants hold several active enrollments).
+    columns:
+      - name: enrollment_id
+        description: Enrollment (grain).
+        data_tests: [not_null, unique]
+      - name: participant_id
+        description: Participant.
+      - name: training_id
+        description: Booked training.
+        data_tests: [not_null]
+      - name: cohort_start_date
+        description: Cohort start.
+      - name: planned_end_date
+        description: Planned end.
+      - name: status_changed_at_utc
+        description: When the current status was set (UTC).
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+      - name: is_status_changed_after_reporting_date
+        description: Status was set after the cutoff, so the status at the cutoff may differ.
+      - name: is_cohort_start_after_reporting_date
+        description: Cohort starts after the cutoff.
+      - name: is_past_planned_end
+        description: Still active although the planned end is before the cutoff.
+
+  - name: int_completed_enrollments
+    description: |
+      Eligible population for completion and abandonment rates.
+      - **Grain / key**: one row per `enrollment_id`.
+      - **Source**: `stg_crm__enrollments` (valid, non-deleted) with `planned_end_date < reporting date`, joined many-to-one to `stg_crm__participants` for `funding_type`.
+      - **Definition**: completed = `abgeschlossen`, abandoned = `abgebrochen`; every other status stays in the population as `other` (unresolved) and is counted in the denominator.
+      - **Missing values**: enrollments without a known participant get `funding_type = 'unknown'`.
+    columns:
+      - name: enrollment_id
+        description: Enrollment (grain).
+        data_tests: [not_null, unique]
+      - name: participant_id
+        description: Participant.
+      - name: training_id
+        description: Booked training.
+        data_tests: [not_null]
+      - name: funding_type
+        description: Funding type of the participant or `unknown`.
+      - name: status
+        description: Current status.
+      - name: planned_end_date
+        description: Planned end (always before the reporting date).
+      - name: is_completed
+        description: Status abgeschlossen.
+      - name: is_abandoned
+        description: Status abgebrochen.
+      - name: is_other_status
+        description: Any other status (unresolved).
+      - name: is_participant_missing
+        description: No participant record for the enrollment.
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'

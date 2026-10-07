@@ -1,0 +1,5 @@
+# Streamlit dashboard (dashboard.py). Separate from the pipeline and dbt requirements.
+# duckdb is pinned to the version that writes db/duckdb/stackfuel.duckdb.
+streamlit>=1.40
+pandas>=2.2
+duckdb==1.5.6

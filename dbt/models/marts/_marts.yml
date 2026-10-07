@@ -1,0 +1,419 @@
+version: 2
+
+# Marts = business-facing dimensions and facts. They only carry clean (standardized) columns
+# and the quality/lineage fields needed for analysis; `*_raw` values are not passed on, only
+# `*_unparsed_raw` / `training_unmapped_raw` where no clean value exists. Rows with a record-level
+# error (`is_quarantined`) and records deleted at the source are excluded (coach rows are kept,
+# see fct_coach_assignments). Reference tests into other models are warnings so that dirty source
+# references stay visible instead of breaking the build.
+
+models:
+  - name: dim_trainings
+    description: |
+      Training catalog dimension.
+      - **Grain / key**: one row per `training_id`.
+      - **Sources**: `stg_lxp__trainings`.
+      - **Missing values**: `unknown` for text, NULL for numbers.
+      - **Invalid records**: quarantined or deleted trainings are excluded.
+      - **Limitations**: `is_active` is the catalog flag, not an enrollment status; `source_as_of_date` is catalog metadata.
+    columns:
+      - name: training_id
+        description: Stable training ID (T01 to T08).
+        data_tests: [not_null, unique]
+      - name: training_name
+        description: Display name.
+      - name: track
+        description: Learning track.
+      - name: variant
+        description: vollzeit, teilzeit or berufsbegleitend.
+      - name: duration_weeks
+        description: Planned duration in weeks.
+      - name: list_price_eur
+        description: List price in EUR (DECIMAL(12,2)).
+      - name: is_active
+        description: 'Catalog flag: training is currently offered.'
+      - name: source_as_of_date
+        description: '{{ doc("col_source_as_of_date") }}'
+      - name: has_consistent_modules
+        description: Module numbering and IDs are consistent.
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+
+  - name: dim_training_modules
+    description: |
+      Curriculum module dimension (flattened from the catalog in staging).
+      - **Grain / key**: one row per (`training_id`, `module_id`).
+      - **Sources**: `stg_lxp__training_modules`.
+      - **Invalid records**: quarantined or deleted modules are excluded.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [training_id, module_id]
+    columns:
+      - name: training_id
+        description: Parent training.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_trainings')
+                field: training_id
+      - name: module_id
+        description: Module ID.
+        data_tests: [not_null]
+      - name: module_order
+        description: Position in the curriculum (starts at 1).
+        data_tests:
+          - value_between:
+              arguments: {min_value: 1}
+      - name: module_name
+        description: Module title.
+      - name: estimated_hours
+        description: Estimated learning hours.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0}
+      - name: source_as_of_date
+        description: '{{ doc("col_source_as_of_date") }}'
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+
+  - name: dim_participants
+    description: |
+      Participant dimension for dashboards (no e-mail address, no birth date).
+      - **Grain / key**: one row per source `participant_id`. Participants are not merged by e-mail: a shared normalized e-mail is only exposed as a hint (`canonical_participant_id`, `has_duplicate_identity`), because it is not proof of identity and enrollments reference the source ID.
+      - **Sources**: `stg_crm__participants`.
+      - **Missing values**: `unknown` for text attributes.
+      - **Invalid records**: quarantined or deleted participants are excluded.
+    columns:
+      - name: participant_id
+        description: Stable CRM participant ID.
+        data_tests: [not_null, unique]
+      - name: canonical_participant_id
+        description: Lowest participant ID that shares the normalized e-mail (duplicate-person hint).
+      - name: has_duplicate_identity
+        description: True when another participant ID shares the normalized e-mail.
+      - name: first_name
+        description: First name.
+      - name: last_name
+        description: Last name.
+      - name: city
+        description: City or `unknown`.
+      - name: federal_state
+        description: Federal state or `unknown`.
+      - name: funding_type
+        description: bildungsgutschein, selbstzahler, firmenkunde or unknown.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [bildungsgutschein, selbstzahler, firmenkunde, unknown]
+              config: {severity: warn}
+      - name: acquisition_channel
+        description: Acquisition channel, snake_case.
+      - name: is_email_valid
+        description: Whether the e-mail has a valid format (the address itself is not exposed).
+      - name: is_birth_date_valid
+        description: Whether the birth date is plausible (the date itself is not exposed).
+      - name: created_at_utc
+        description: CRM creation instant (UTC).
+      - name: modified_at_utc
+        description: CRM last modification instant (UTC).
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+
+  - name: fct_enrollments
+    description: |
+      Enrollment fact (Teilnahme).
+      - **Grain / key**: one row per `enrollment_id`.
+      - **Sources**: `stg_crm__enrollments` with a many-to-one lookup of `funding_type` in `dim_participants`.
+      - **Missing values**: `funding_type = unknown` when the participant is not in the dimension; dates NULL with `*_unparsed_raw` when the source text could not be parsed.
+      - **Invalid records**: quarantined or deleted enrollments are excluded.
+      - **Limitations**: only the current status is known (no history).
+    columns:
+      - name: enrollment_id
+        description: Stable CRM enrollment ID.
+        data_tests: [not_null, unique]
+      - name: participant_id
+        description: Participant.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_participants')
+                field: participant_id
+              config: {severity: warn}
+      - name: training_id
+        description: Booked training.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_trainings')
+                field: training_id
+              config: {severity: warn}
+      - name: cohort_start_date
+        description: Cohort start date.
+      - name: cohort_start_date_unparsed_raw
+        description: Source text where the cohort start could not be parsed.
+      - name: planned_end_date
+        description: Planned end date.
+      - name: planned_end_date_unparsed_raw
+        description: Source text where the planned end could not be parsed.
+      - name: planned_duration_days
+        description: Planned days between start and end.
+      - name: status
+        description: Current status (angemeldet, aktiv, pausiert, abgeschlossen, abgebrochen, storniert, unknown).
+      - name: is_open_status
+        description: True for angemeldet, aktiv and pausiert.
+      - name: status_changed_at_utc
+        description: When the current status was set (UTC).
+      - name: created_at_utc
+        description: CRM creation instant (UTC).
+      - name: modified_at_utc
+        description: CRM last modification instant (UTC).
+      - name: funding_type
+        description: Funding type of the participant, `unknown` when not available.
+      - name: has_participant_reference
+        description: Participant existed at load time.
+      - name: has_training_reference
+        description: Training existed at load time.
+      - name: is_participant_in_dim
+        description: Participant is present in dim_participants.
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+
+  - name: fct_progress_events
+    description: |
+      Learning progress event fact.
+      - **Grain / key**: one row per `event_id` (the 222 duplicated source events are collapsed in staging).
+      - **Sources**: `stg_lxp__progress_events`.
+      - **Invalid records**: quarantined or deleted events are excluded.
+      - **Limitations**: events of modules outside the enrollment's training stay (flagged) but do not count towards progress.
+    columns:
+      - name: event_id
+        description: Stable event ID.
+        data_tests: [not_null, unique]
+      - name: enrollment_id
+        description: Enrollment of the event.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_enrollments')
+                field: enrollment_id
+              config: {severity: warn}
+      - name: module_id
+        description: Module of the event.
+      - name: event_type
+        description: module_started, exercise_submitted, quiz_passed or module_completed.
+      - name: event_at_utc
+        description: Event instant (UTC).
+      - name: has_enrollment_reference
+        description: Enrollment existed at load time.
+      - name: has_module_reference
+        description: Module exists in the catalog.
+      - name: is_module_in_enrollment_training
+        description: Module belongs to the enrollment's training; NULL when not decidable.
+      - name: is_event_before_cohort_start
+        description: Event is before the cohort start (Berlin date); NULL when not decidable.
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+
+  - name: fct_enrollment_progress
+    description: |
+      Curriculum and time progress per enrollment.
+      - **Grain / key**: one row per `enrollment_id`.
+      - **Sources**: `int_enrollment_time_progress`, `int_enrollment_progress` (one-to-one).
+      - **Definitions**: see the intermediate models. Behind schedule = `progress_gap <= -0.15`; time columns exist for active enrollments only.
+      - **Missing values**: no events means 0 completed modules; time columns NULL when not active or dates missing.
+    columns:
+      - name: enrollment_id
+        description: Enrollment (grain).
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('fct_enrollments')
+                field: enrollment_id
+              config: {severity: warn}
+      - name: training_id
+        description: Booked training.
+      - name: status
+        description: Current enrollment status.
+      - name: is_active
+        description: Status is aktiv.
+      - name: completed_module_count
+        description: Distinct completed modules of the enrollment's training.
+      - name: total_module_count
+        description: Modules of the training.
+      - name: completed_module_share
+        description: Completed / total modules (0..1).
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: elapsed_days
+        description: Days from cohort start to the reporting date (active only).
+      - name: planned_duration_days
+        description: Planned days from start to planned end (active only).
+      - name: time_progress_share
+        description: Elapsed / planned time clamped to 0..1 (active only).
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: time_progress_quality_flag
+        description: ok, cohort_not_started, past_planned_end, missing_dates or non_positive_planned_duration.
+      - name: progress_gap
+        description: completed_module_share - time_progress_share.
+      - name: is_behind_schedule
+        description: progress_gap <= -0.15.
+      - name: progress_event_count
+        description: Valid progress events up to the reporting date.
+      - name: last_event_at_utc
+        description: Last progress event (UTC).
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+
+  - name: fct_survey_responses
+    description: |
+      Feedback answer fact (free text is not passed on).
+      - **Grain / key**: one row per `response_id`.
+      - **Sources**: `stg_lxp__survey_responses` with a many-to-one lookup of `training_id` via the enrollment.
+      - **Missing values**: NULL score for text/empty answers (`is_answer_missing`); `training_id` NULL when the enrollment is unknown.
+      - **Invalid records**: quarantined (for example out-of-range NPS) or deleted answers are excluded.
+    columns:
+      - name: response_id
+        description: Stable response ID.
+        data_tests: [not_null, unique]
+      - name: enrollment_id
+        description: Enrollment of the answer.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_enrollments')
+                field: enrollment_id
+              config: {severity: warn}
+      - name: training_id
+        description: Training of the enrollment.
+      - name: survey_type
+        description: wochenfeedback or abschlussfeedback.
+      - name: survey_week
+        description: Training week (weekly feedback only).
+      - name: question_key
+        description: Question identifier.
+      - name: answer_score
+        description: Numeric answer (NPS 0..10, ratings 1..5); NULL for text/empty.
+      - name: answer_context
+        description: Scale (`10`), `unknown` or `text`.
+      - name: nps_category
+        description: promoter, passive or detractor for valid NPS answers.
+      - name: submitted_at_utc
+        description: Submission instant (UTC).
+      - name: is_answer_missing
+        description: The answer was empty.
+      - name: is_answer_valid
+        description: Numeric answer is valid for its question.
+      - name: is_question_valid_for_survey_type
+        description: Question belongs to the survey type.
+      - name: is_survey_week_valid
+        description: survey_week fits the survey type.
+      - name: has_enrollment_reference
+        description: Enrollment existed at load time.
+      - name: is_enrollment_in_fact
+        description: Enrollment is present in the valid enrollment data.
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+
+  - name: fct_coach_assignments
+    description: |
+      Coach workbook assignment fact, all snapshot days.
+      - **Grain / key**: one row per (`coach_assignment_id`, `snapshot_date`).
+      - **Sources**: `int_coach_assignment_matches`, `stg_coach__assignments`.
+      - **Matching**: `matched` / `ambiguous` / `unmatched` as produced by the pipeline. Ambiguous and unmatched rows are not forced into an enrollment; only `is_confident_assignment` rows carry `matched_enrollment_id`.
+      - **Snapshot**: `snapshot_date` is the pipeline day, `coach_snapshot_as_of_date` the workbook's business date (2026-09-01) versus the KPI cutoff 2026-08-31 (`snapshot_mismatch_flag`).
+      - **Invalid records**: rows are kept even with a validation error (for example an unmappable Ampel is `unknown`); filter on `validation_status` if needed.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [coach_assignment_id, snapshot_date]
+    columns:
+      - name: coach_assignment_id
+        description: Technical workbook row ID.
+        data_tests: [not_null]
+      - name: snapshot_date
+        description: '{{ doc("col_snapshot_date") }}'
+        data_tests: [not_null]
+      - name: coach
+        description: Coach name or `unknown`.
+      - name: training_id
+        description: Training mapped from the workbook text; NULL when unmatched or ambiguous.
+      - name: training_unmapped_raw
+        description: Workbook training text where no training ID could be derived.
+      - name: cohort_start_date
+        description: Cohort start from the workbook.
+      - name: matched_participant_id
+        description: Matched participant (matched rows only).
+      - name: matched_enrollment_id
+        description: Matched enrollment (confident assignments only).
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_enrollments')
+                field: enrollment_id
+              config: {severity: warn, where: "matched_enrollment_id is not null"}
+      - name: match_status
+        description: matched, ambiguous or unmatched.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [matched, ambiguous, unmatched]
+              config: {severity: warn}
+      - name: match_method
+        description: unique_email, name_training_cohort, name_training, ambiguous_candidates or no_match.
+      - name: is_confident_assignment
+        description: Matched and the enrollment exists in the valid CRM data.
+      - name: enrollment_status
+        description: Current status of the matched enrollment.
+      - name: is_active_or_paused
+        description: Matched enrollment is aktiv or pausiert.
+      - name: ampel
+        description: green, yellow, red or unknown.
+      - name: is_red
+        description: Ampel is red.
+      - name: last_contact_date
+        description: Last coach contact.
+      - name: business_key_duplicate_flag
+        description: Several rows share the business key (monitored, not an error).
+      - name: has_conflicting_coach
+        description: Different coaches claim the same enrollment in the snapshot.
+      - name: is_latest_snapshot
+        description: Row belongs to the newest snapshot day.
+      - name: coach_snapshot_as_of_date
+        description: Business date of the workbook.
+      - name: snapshot_mismatch_flag
+        description: Workbook date differs from the reporting date.
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'

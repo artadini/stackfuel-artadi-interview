@@ -1,0 +1,53 @@
+normalized_spelling,training_ids,notes
+data analyst vollzeit,T01,Data Analyst full-time
+data analyst vz,T01,
+da vollzeit,T01,
+da vz,T01,
+data analyst teilzeit,T02,Data Analyst part-time
+data analyst tz,T02,
+da teilzeit,T02,
+da tz,T02,
+data analyst,T01|T02,track without variant: ambiguous
+da,T01|T02,track without variant: ambiguous
+data scientist vollzeit,T03,Data Scientist full-time
+data scientist vz,T03,
+ds vollzeit,T03,
+ds vz,T03,
+data scientist teilzeit,T04,Data Scientist part-time
+data scientist tz,T04,
+ds teilzeit,T04,
+ds tz,T04,
+data scientist,T03|T04,track without variant: ambiguous
+ds,T03|T04,track without variant: ambiguous
+data engineer vollzeit,T05,Data Engineer (only offered full-time)
+data engineer vz,T05,
+data engineering vollzeit,T05,
+data engineering vz,T05,
+de vollzeit,T05,
+de vz,T05,
+data engineer,T05,only one variant exists in the catalog
+data engineering,T05,only one variant exists in the catalog
+python fuer data analytics berufsbegleitend,T06,Python fuer Data Analytics (only offered part-time while working)
+python fuer data analytics bb,T06,
+python fuer data analytics,T06,only one variant exists in the catalog
+python f da,T06,
+python berufsbegleitend,T06,
+python berufsbegl,T06,
+python bb,T06,
+python,T06,only one variant exists in the catalog
+ki und machine learning grundlagen berufsbegleitend,T07,KI & Machine Learning Grundlagen
+ki und machine learning grundlagen,T07,
+ki ml grundlagen bb,T07,
+ki ml grundlagen,T07,
+ki grundlagen,T07,
+ai grundlagen,T07,
+business intelligence mit power bi vollzeit,T08,Business Intelligence mit Power BI (only offered full-time)
+business intelligence mit power bi,T08,
+business intelligence power bi,T08,
+bi mit power bi vollzeit,T08,
+bi mit power bi,T08,
+power bi vollzeit,T08,
+power bi,T08,
+pbi vollzeit,T08,
+pbi vz,T08,
+pbi,T08,

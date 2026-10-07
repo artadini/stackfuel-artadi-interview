@@ -1,0 +1,6 @@
+# dbt runtime for the transformation layer (kept apart from the pipeline requirements).
+# duckdb is pinned to the version that writes db/duckdb/stackfuel.duckdb (requirements.txt):
+# a DuckDB file cannot be opened by an older engine than the one that wrote it.
+dbt-core>=1.12,<1.13
+dbt-duckdb>=1.11,<1.12
+duckdb==1.5.6

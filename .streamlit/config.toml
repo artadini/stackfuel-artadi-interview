@@ -1,0 +1,9 @@
+# Project-local Streamlit settings for dashboard.py.
+[server]
+headless = true            # no first-run e-mail prompt; open the printed URL yourself
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"

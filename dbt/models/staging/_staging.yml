@@ -1,0 +1,582 @@
+version: 2
+
+# Staging = atomic, source-aligned models. One deterministic row per source record
+# (macro dedupe_latest), explicit DuckDB casts, clean (standardized) columns only. A `*_raw`
+# value is exposed only as `*_unparsed_raw` where the clean value is NULL although the source had
+# a value. No business KPIs and no joins that can multiply rows. Inputs are the curated tables
+# (one per snapshot date), unioned by the macro `curated_source`; `is_deleted` is constant false
+# because the pipeline does not detect hard deletes.
+#
+# Test policy: structural keys fail the build; categorical values and references into other
+# sources are reported as warnings so that new or dirty source values stay visible without
+# silently dropping data.
+
+models:
+  - name: stg_lxp__trainings
+    description: |
+      Course catalog.
+      - **Purpose**: one clean record per training; carries the nested `modules` array (`payload_json`) for flattening.
+      - **Grain / key**: one row per `training_id`.
+      - **Source**: all curated tables `curated.<date>_catalog_trainings` (incremental by `snapshot_date`).
+      - **Deduplication**: `source_as_of_date desc, ingested_at desc, run_id desc` (the catalog has no row-level change time).
+      - **Missing values**: NULL for numbers/booleans, `unknown` for text (curated rule).
+      - **Invalid records**: kept and flagged (`is_quarantined`); marts exclude them.
+      - **Limitations**: `source_as_of_date` is the catalog's `as_of`, not a modification time; no deletions are inferred from it.
+    data_tests:
+      - staging_matches_curated_keys:
+          arguments:
+            dataset: trainings
+            key_columns: [training_id]
+    columns:
+      - name: training_id
+        description: Stable training ID (T01 to T08), upper-cased by the curated layer.
+        data_tests: [not_null, unique]
+      - name: training_name
+        description: Display name of the training (trimmed).
+        data_tests: [not_null]
+      - name: track
+        description: Learning track (for example Data Analyst).
+      - name: variant
+        description: Training variant, snake_case.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [vollzeit, teilzeit, berufsbegleitend, unknown]
+              config: {severity: warn}
+      - name: duration_weeks
+        description: Planned duration in weeks.
+        data_tests: [not_null]
+      - name: list_price_eur
+        description: List price in EUR, DECIMAL(12,2).
+      - name: is_active
+        description: Whether the training is currently offered (catalog flag, not enrollment status).
+        data_tests: [not_null]
+      - name: has_consistent_modules
+        description: True when module orders are 1..n and module IDs are unique and prefixed with the training ID.
+      - name: payload_json
+        description: Complete source object with the nested `modules` array; input of stg_lxp__training_modules.
+      - name: source_as_of_date
+        description: '{{ doc("col_source_as_of_date") }}'
+      - name: run_id
+        description: '{{ doc("col_run_id") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+      - name: snapshot_date
+        description: '{{ doc("col_snapshot_date") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: is_quarantined
+        description: '{{ doc("col_is_quarantined") }}'
+      - name: is_deleted
+        description: '{{ doc("col_is_deleted") }}'
+
+  - name: stg_lxp__training_modules
+    description: |
+      Curriculum modules, flattened from the nested `modules` array **in staging** (the raw layer is not flattened).
+      - **Grain / key**: one row per (`training_id`, `module_id`).
+      - **Source**: `stg_lxp__trainings.payload_json` (DuckDB `json_extract` + `unnest`). Incremental: only trainings with a new version are flattened again, and all old module rows of such a training are replaced.
+      - **Deduplication**: per (`training_id`, `module_id`) by `module_order asc, module_name asc`, guarding against a module listed twice in one payload.
+      - **Limitations**: no module completion semantics here; progress is calculated in intermediate models.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [training_id, module_id]
+    columns:
+      - name: training_id
+        description: Parent training.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_lxp__trainings')
+                field: training_id
+      - name: module_id
+        description: Module ID, prefixed with the training ID (for example T01-M03).
+        data_tests: [not_null]
+      - name: module_order
+        description: Position of the module in the curriculum, starting at 1.
+        data_tests:
+          - not_null
+          - value_between:
+              arguments:
+                min_value: 1
+      - name: module_name
+        description: Module title.
+      - name: estimated_hours
+        description: Estimated learning hours of the module.
+        data_tests:
+          - value_between:
+              arguments:
+                min_value: 0
+      - name: source_as_of_date
+        description: '{{ doc("col_source_as_of_date") }}'
+      - name: run_id
+        description: '{{ doc("col_run_id") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+      - name: snapshot_date
+        description: '{{ doc("col_snapshot_date") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: is_quarantined
+        description: '{{ doc("col_is_quarantined") }}'
+      - name: is_deleted
+        description: '{{ doc("col_is_deleted") }}'
+
+  - name: stg_crm__participants
+    description: |
+      CRM participants.
+      - **Grain / key**: one row per `participant_id`.
+      - **Source**: all curated tables `curated.<date>_crm_participants` (incremental by `snapshot_date`).
+      - **Deduplication**: latest `modified_at_utc`, then `ingested_at`, then `run_id`.
+      - **Timestamps**: CRM local time is kept (`created_at`, `modified_at`, Europe/Berlin) next to the canonical UTC instant (`*_at_utc`).
+      - **Missing values**: `unknown` for text, NULL for e-mail, dates and timestamps; `*_unparsed_raw` shows the source text when a value could not be parsed.
+      - **Limitations**: CRM has no participant status; `canonical_participant_id` (shared normalized e-mail) is advisory and no participants are merged.
+    data_tests:
+      - staging_matches_curated_keys:
+          arguments:
+            dataset: participants
+            key_columns: [participant_id]
+    columns:
+      - name: participant_id
+        description: Stable CRM participant ID (VARCHAR).
+        data_tests: [not_null, unique]
+      - name: canonical_participant_id
+        description: Lowest participant ID sharing the same normalized e-mail (best effort duplicate-person hint).
+      - name: first_name
+        description: First name, every component capitalized.
+      - name: last_name
+        description: Last name, every component capitalized.
+      - name: name_match_key
+        description: Order-insensitive, diacritic-folded name key used for matching.
+      - name: email
+        description: Lower-cased e-mail (personal data; not passed to dashboard-facing marts).
+      - name: is_email_valid
+        description: Whether the e-mail has a valid format; NULL when missing.
+      - name: birth_date
+        description: Birth date (personal data; not passed to marts).
+      - name: birth_date_unparsed_raw
+        description: Source text of the birth date when it could not be parsed.
+      - name: is_birth_date_valid
+        description: Plausibility check of the birth date; NULL when missing.
+      - name: city
+        description: City, capitalized (German particles lower-case).
+      - name: federal_state
+        description: German federal state or `unknown`.
+      - name: funding_type
+        description: Funding type, snake_case.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [bildungsgutschein, selbstzahler, firmenkunde, unknown]
+              config: {severity: warn}
+      - name: acquisition_channel
+        description: Acquisition channel, snake_case.
+      - name: created_at
+        description: CRM creation time as delivered (Europe/Berlin local, naive).
+      - name: created_at_utc
+        description: Creation instant in UTC.
+        data_tests:
+          - timestamp_in_range:
+              arguments:
+                min_value: '2020-01-01'
+                max_value: '2026-09-02'
+          - column_lte_column:
+              arguments:
+                other_column: modified_at_utc
+              config: {severity: warn}
+      - name: created_at_unparsed_raw
+        description: Source text of `created_at` when it could not be parsed.
+      - name: modified_at
+        description: CRM modification time as delivered (Europe/Berlin local, naive).
+      - name: modified_at_utc
+        description: Modification instant in UTC; version-ordering and incremental watermark column.
+        data_tests:
+          - timestamp_in_range:
+              arguments:
+                min_value: '2020-01-01'
+                max_value: '2026-09-02'
+      - name: modified_at_unparsed_raw
+        description: Source text of `modified_at` when it could not be parsed.
+      - name: source_timezone
+        description: Time zone of the CRM source timestamps (Europe/Berlin).
+      - name: source_as_of_date
+        description: '{{ doc("col_source_as_of_date") }}'
+      - name: run_id
+        description: '{{ doc("col_run_id") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+      - name: snapshot_date
+        description: '{{ doc("col_snapshot_date") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: is_quarantined
+        description: '{{ doc("col_is_quarantined") }}'
+      - name: is_deleted
+        description: '{{ doc("col_is_deleted") }}'
+
+  - name: stg_crm__enrollments
+    description: |
+      CRM enrollments (Teilnahmen).
+      - **Grain / key**: one row per `enrollment_id`.
+      - **Source**: all curated tables `curated.<date>_crm_enrollments` (incremental by `snapshot_date`).
+      - **Deduplication**: latest `modified_at_utc`, then `ingested_at`, then `run_id`.
+      - **Timestamps**: Berlin local source value plus canonical UTC instant.
+      - **Missing values**: `unknown` status; NULL dates/timestamps with `*_unparsed_raw` where the source had unparseable text.
+      - **Limitations**: only the current status is stored (no history), see `status_changed_at_utc`.
+    data_tests:
+      - staging_matches_curated_keys:
+          arguments:
+            dataset: enrollments
+            key_columns: [enrollment_id]
+    columns:
+      - name: enrollment_id
+        description: Stable CRM enrollment ID (VARCHAR).
+        data_tests: [not_null, unique]
+      - name: participant_id
+        description: Participant of the enrollment.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_crm__participants')
+                field: participant_id
+              config: {severity: warn, where: "not is_quarantined and not is_deleted"}
+      - name: training_id
+        description: Booked training (T01 to T08, normalized).
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_lxp__trainings')
+                field: training_id
+              config: {severity: warn, where: "not is_quarantined and not is_deleted"}
+      - name: cohort_start_date
+        description: Start date of the cohort.
+      - name: cohort_start_date_unparsed_raw
+        description: Source text of the cohort start when it could not be parsed.
+      - name: planned_end_date
+        description: Planned end date of the enrollment.
+      - name: planned_end_date_unparsed_raw
+        description: Source text of the planned end when it could not be parsed.
+      - name: planned_duration_days
+        description: Days between cohort start and planned end (NULL when a date is missing).
+      - name: status
+        description: Enrollment status, snake_case.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [angemeldet, aktiv, pausiert, abgeschlossen, abgebrochen, storniert, unknown]
+              config: {severity: warn}
+      - name: is_status_valid
+        description: Whether the status is one of the documented values; NULL when missing.
+      - name: is_open_status
+        description: True for angemeldet, aktiv and pausiert.
+      - name: has_participant_reference
+        description: Whether the participant exists in the participant data at load time.
+      - name: has_training_reference
+        description: Whether the training exists in the catalog at load time.
+      - name: status_changed_at
+        description: Status change time as delivered (Europe/Berlin local, naive).
+      - name: status_changed_at_utc
+        description: Status change instant in UTC.
+      - name: status_changed_at_unparsed_raw
+        description: Source text of the status change time when it could not be parsed.
+      - name: created_at
+        description: Creation time as delivered (Europe/Berlin local, naive).
+      - name: created_at_utc
+        description: Creation instant in UTC.
+      - name: created_at_unparsed_raw
+        description: Source text of the creation time when it could not be parsed.
+      - name: modified_at
+        description: Modification time as delivered (Europe/Berlin local, naive).
+      - name: modified_at_utc
+        description: Modification instant in UTC; version-ordering and incremental watermark column.
+      - name: modified_at_unparsed_raw
+        description: Source text of the modification time when it could not be parsed.
+      - name: source_timezone
+        description: Time zone of the CRM source timestamps (Europe/Berlin).
+      - name: source_as_of_date
+        description: '{{ doc("col_source_as_of_date") }}'
+      - name: run_id
+        description: '{{ doc("col_run_id") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+      - name: snapshot_date
+        description: '{{ doc("col_snapshot_date") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: is_quarantined
+        description: '{{ doc("col_is_quarantined") }}'
+      - name: is_deleted
+        description: '{{ doc("col_is_deleted") }}'
+
+  - name: stg_lxp__progress_events
+    description: |
+      LXP learning progress events, one per event. **Not** aggregated here.
+      - **Grain / key**: one row per `event_id`.
+      - **Source**: all curated tables `curated.<date>_lxp_progress_events` (incremental by `snapshot_date`).
+      - **Deduplication**: latest `event_at_utc`, then `ingested_at`, then `run_id` (the 222 source duplicates are identical).
+      - **Missing values**: `unknown` event type, NULL module/time (`event_at_unparsed_raw` shows unparseable text).
+      - **Limitations**: some events belong to a module outside the enrollment's training (`is_module_in_enrollment_training = false`).
+    data_tests:
+      - staging_matches_curated_keys:
+          arguments:
+            dataset: progress_events
+            key_columns: [event_id]
+    columns:
+      - name: event_id
+        description: Stable event ID.
+        data_tests: [not_null, unique]
+      - name: enrollment_id
+        description: Enrollment the event belongs to.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_crm__enrollments')
+                field: enrollment_id
+              config: {severity: warn, where: "not is_quarantined and not is_deleted"}
+      - name: module_id
+        description: Module the event refers to.
+      - name: event_type
+        description: Event type, snake_case.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [module_started, exercise_submitted, quiz_passed, module_completed, unknown]
+              config: {severity: warn}
+      - name: is_event_type_valid
+        description: Whether the event type is one of the documented values.
+      - name: has_enrollment_reference
+        description: Whether the enrollment exists at load time.
+      - name: has_module_reference
+        description: Whether the module exists in the catalog.
+      - name: enrollment_training_id
+        description: Training of the referenced enrollment at load time.
+      - name: module_training_id
+        description: Training the referenced module belongs to.
+      - name: is_module_in_enrollment_training
+        description: Whether the module belongs to the enrollment's training; NULL when not decidable.
+      - name: is_event_before_cohort_start
+        description: Whether the event (Berlin date) lies before the cohort start; NULL when not decidable.
+      - name: event_at_utc
+        description: Event instant in UTC (LXP delivers UTC).
+        data_tests:
+          - not_null:
+              config: {where: "not is_quarantined"}
+      - name: event_at_unparsed_raw
+        description: Source text of the event time when it could not be parsed.
+      - name: source_timezone
+        description: Time zone of the LXP source timestamps (UTC).
+      - name: source_as_of_date
+        description: '{{ doc("col_source_as_of_date") }}'
+      - name: run_id
+        description: '{{ doc("col_run_id") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+      - name: snapshot_date
+        description: '{{ doc("col_snapshot_date") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: is_quarantined
+        description: '{{ doc("col_is_quarantined") }}'
+      - name: is_deleted
+        description: '{{ doc("col_is_deleted") }}'
+
+  - name: stg_lxp__survey_responses
+    description: |
+      LXP feedback answers (weekly feedback and completion feedback), one per answer.
+      - **Grain / key**: one row per `response_id`.
+      - **Source**: all curated tables `curated.<date>_lxp_survey_responses` (incremental by `snapshot_date`).
+      - **Deduplication**: latest `submitted_at_utc`, then `ingested_at`, then `run_id`.
+      - **Missing values**: NULL answer and score, `answer_context = unknown`, `is_answer_missing = true`; free text never becomes a number.
+      - **Limitations**: the source delivers every answer as a string; scores exist only for numeric questions.
+    data_tests:
+      - staging_matches_curated_keys:
+          arguments:
+            dataset: survey_responses
+            key_columns: [response_id]
+    columns:
+      - name: response_id
+        description: Stable response ID.
+        data_tests: [not_null, unique]
+      - name: enrollment_id
+        description: Enrollment the answer belongs to.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_crm__enrollments')
+                field: enrollment_id
+              config: {severity: warn, where: "not is_quarantined and not is_deleted"}
+      - name: survey_type
+        description: Survey type, snake_case.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [wochenfeedback, abschlussfeedback, unknown]
+              config: {severity: warn}
+      - name: survey_week
+        description: Training week of a weekly feedback; NULL for completion feedback.
+      - name: question_key
+        description: >
+          Question identifier. Actual values: zufriedenheit_gesamt, tempo, freitext (wochenfeedback);
+          nps, zufriedenheit_coach, weiterempfehlung_grund (abschlussfeedback).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [zufriedenheit_gesamt, tempo, freitext, nps, zufriedenheit_coach, weiterempfehlung_grund, unknown]
+              config: {severity: warn}
+      - name: answer_value
+        description: Trimmed answer text.
+      - name: answer_score
+        description: Numeric answer (`6/10` gives 6) for numeric questions; NULL for text and empty answers.
+      - name: answer_context
+        description: Scale of the answer (`10`), `unknown` for a plain number, `text` for free text.
+      - name: is_answer_missing
+        description: True when the answer was empty.
+      - name: is_answer_valid
+        description: True when a numeric answer is a whole number inside the question's range; NULL for text/empty.
+      - name: nps_category
+        description: promoter (9-10), passive (7-8) or detractor (0-6) for valid NPS answers.
+      - name: is_question_valid_for_survey_type
+        description: Whether the question belongs to the survey type.
+      - name: is_survey_week_valid
+        description: Whether `survey_week` fits the survey type.
+      - name: has_enrollment_reference
+        description: Whether the enrollment exists at load time.
+      - name: submitted_at_utc
+        description: Submission instant in UTC (LXP delivers UTC).
+      - name: submitted_at_unparsed_raw
+        description: Source text of the submission time when it could not be parsed.
+      - name: source_timezone
+        description: Time zone of the LXP source timestamps (UTC).
+      - name: source_as_of_date
+        description: '{{ doc("col_source_as_of_date") }}'
+      - name: run_id
+        description: '{{ doc("col_run_id") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+      - name: snapshot_date
+        description: '{{ doc("col_snapshot_date") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: is_quarantined
+        description: '{{ doc("col_is_quarantined") }}'
+      - name: is_deleted
+        description: '{{ doc("col_is_deleted") }}'
+
+  - name: stg_coach__assignments
+    description: |
+      Coach workbook rows per snapshot day, with the pipeline's matching result.
+      - **Grain / key**: one row per (`coach_assignment_id`, `snapshot_date`); different snapshot dates are never collapsed.
+      - **Source**: all curated tables `curated.<date>_excel_coach_betreuungsliste` (incremental by `snapshot_date`).
+      - **Deduplication**: within (`coach_assignment_id`, `snapshot_date`) by `ingested_at desc, run_id desc`.
+      - **Matching**: `matched` / `ambiguous` / `unmatched` as produced by the pipeline (e-mail, then name + training + cohort); never forced here.
+      - **Missing values**: `ampel = unknown`, `coach = unknown`; NULL dates/IDs with `*_unparsed_raw` or `training_unmapped_raw` where a raw value exists.
+      - **Limitations**: `business_key_duplicate_flag` is a monitored quality condition, not an error; e-mail and notes are not selected.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [coach_assignment_id, snapshot_date]
+      - staging_matches_curated_keys:
+          arguments:
+            dataset: coach_betreuungsliste
+            key_columns: [coach_assignment_id, snapshot_date]
+    columns:
+      - name: coach_assignment_id
+        description: Deterministic technical row ID (SHA-256 of file, snapshot date and Excel row).
+        data_tests: [not_null]
+      - name: snapshot_date
+        description: '{{ doc("col_snapshot_date") }}'
+        data_tests: [not_null]
+      - name: excel_row_number
+        description: Row number in the workbook sheet (lineage).
+      - name: coach
+        description: Coach name, trimmed; `unknown` when empty.
+      - name: training_id
+        description: Training derived from the free-text training via the mapping table (T01 to T08); NULL when unmatched or ambiguous.
+      - name: training_match_status
+        description: Result of the training mapping.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [matched, ambiguous, unmatched]
+              config: {severity: warn}
+      - name: training_unmapped_raw
+        description: Source training text where no training ID could be derived.
+      - name: cohort_start_date
+        description: Cohort start parsed from `Kohorte` (month/year gives the first of the month).
+      - name: cohort_start_date_unparsed_raw
+        description: Source `Kohorte` text where it could not be parsed.
+      - name: ampel
+        description: Traffic light normalized to green, yellow, red or unknown (empty is never a colour).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [green, yellow, red, unknown]
+              config: {severity: warn}
+      - name: ampel_status
+        description: mapped, missing or unmapped.
+      - name: ampel_unmapped_raw
+        description: Source Ampel text that could not be mapped.
+      - name: last_contact_date
+        description: Date of the last coach contact.
+      - name: last_contact_date_unparsed_raw
+        description: Source text of the last contact where it could not be parsed.
+      - name: matched_participant_id
+        description: Participant the row was matched to; NULL unless `match_status = matched`.
+      - name: matched_enrollment_id
+        description: Enrollment the row was matched to; NULL unless uniquely matched.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_crm__enrollments')
+                field: enrollment_id
+              config: {severity: warn, where: "matched_enrollment_id is not null"}
+      - name: match_status
+        description: matched, ambiguous or unmatched. Ambiguous and unmatched rows are not forced into an enrollment.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [matched, ambiguous, unmatched]
+              config: {severity: warn}
+      - name: match_method
+        description: unique_email, name_training_cohort, name_training, ambiguous_candidates or no_match.
+      - name: candidate_count
+        description: Number of candidates that satisfied the matching rule.
+      - name: enrollment_candidate_count
+        description: Number of enrollment candidates in the enrollment step.
+      - name: enrollment_match_status
+        description: matched, ambiguous or unmatched at enrollment level.
+      - name: coach_assignment_business_key
+        description: email|training_id|cohort_start_date (normalized, `<unknown>` for missing parts). Not unique by design.
+      - name: business_key_duplicate_flag
+        description: True when several rows of the snapshot share the business key (monitored quality condition).
+      - name: has_complete_business_key
+        description: True when no part of the business key is unknown.
+      - name: completeness_status
+        description: complete or incomplete (a required workbook column is empty).
+      - name: is_incomplete
+        description: True for incomplete rows.
+      - name: source_as_of_date
+        description: Business date of the workbook ("Stand", 2026-09-01).
+      - name: run_id
+        description: '{{ doc("col_run_id") }}'
+      - name: ingested_at
+        description: '{{ doc("col_ingested_at") }}'
+      - name: quality_flags
+        description: '{{ doc("col_quality_flags") }}'
+      - name: validation_status
+        description: '{{ doc("col_validation_status") }}'
+      - name: is_quarantined
+        description: '{{ doc("col_is_quarantined") }}'

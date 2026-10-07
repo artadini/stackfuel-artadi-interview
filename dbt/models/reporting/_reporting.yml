@@ -1,0 +1,314 @@
+version: 2
+
+# Reporting = final models that answer the five business questions of the assignment.
+#
+# Assumptions (all reports):
+#  1. Reporting date ("Stichtag") is 2026-08-31 (var reporting_date); every report row carries it.
+#  2. "Active" means enrollment status `aktiv`. CRM keeps only the current status, so the status AT
+#     the cutoff is approximated by the current status (flag current_status_used_no_status_history).
+#  3. Completion/abandonment eligibility: planned_end_date < 2026-08-31. Completed = `abgeschlossen`,
+#     abandoned = `abgebrochen`; every other status is `other_status_count` and stays in the denominator.
+#  4. Progress = distinct completed curriculum modules / modules of the enrollment's training.
+#  5. Behind schedule = completed_module_share - time_progress_share <= -0.15 (curriculum progress at least
+#     15 percentage points below the elapsed share of the planned duration, time share clamped to 0..1).
+#  6. NPS uses only `abschlussfeedback`, question `nps`, valid scores 0-10 submitted up to the cutoff.
+#     promoter 9-10, passive 7-8, detractor 0-6.
+#  7. Coach utilization counts `aktiv` and `pausiert` enrollments of the latest coach snapshot.
+#  8. The coach workbook is dated 2026-09-01 ("Stand"), the KPI cutoff is 2026-08-31. The mismatch is
+#     kept as a documented limitation (snapshot_mismatch_flag), not corrected.
+#  9. Ambiguous and unmatched coach assignments are never force-matched and never counted as assigned.
+
+models:
+  - name: rpt_active_enrollments_by_training
+    description: |
+      **Question 1**: how many enrollments are active at the reporting date, per training.
+      - **Grain / key**: one row per `training_id` (every catalog training, also with 0).
+      - **Sources**: `int_active_enrollments`, `dim_trainings`.
+      - **Definition**: status `aktiv`; counts enrollments, not distinct participants.
+      - **Date cutoff**: 2026-08-31. Only the current status exists; the flags show active enrollments whose status was set after the cutoff, that are past their planned end or whose cohort starts after the cutoff.
+      - **Invalid records**: quarantined/deleted enrollments are excluded.
+    columns:
+      - name: training_id
+        description: Training (grain).
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_trainings')
+                field: training_id
+      - name: training_name
+        description: Training display name.
+      - name: active_enrollment_count
+        description: Enrollments with status aktiv.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0}
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+      - name: status_changed_after_cutoff_count
+        description: Active enrollments whose status was set after the cutoff.
+      - name: past_planned_end_count
+        description: Active enrollments whose planned end is before the cutoff.
+      - name: cohort_start_after_cutoff_count
+        description: Active enrollments whose cohort starts after the cutoff.
+      - name: data_quality_flags
+        description: '{{ doc("col_data_quality_flags") }}'
+
+  - name: rpt_completion_abandonment_by_training_funding
+    description: |
+      **Question 2**: completion and abandonment rates of enrollments whose planned end is before the cutoff.
+      - **Grain / key**: one row per (`training_id`, `funding_type`) that has eligible enrollments.
+      - **Sources**: `int_completed_enrollments`, `dim_trainings`.
+      - **Definition**: eligible = planned_end_date < 2026-08-31; completed = `abgeschlossen`; abandoned = `abgebrochen`; shares = count / eligible (0..1). Other statuses (for example still `aktiv`) are `other_status_count`, remain in the denominator and are not dropped.
+      - **Missing values**: enrollments without a known participant are reported as `funding_type = unknown` (`missing_participant_count`).
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [training_id, funding_type]
+    columns:
+      - name: training_id
+        description: Training.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_trainings')
+                field: training_id
+      - name: training_name
+        description: Training display name.
+      - name: funding_type
+        description: Funding type (bildungsgutschein, selbstzahler, firmenkunde, unknown).
+        data_tests: [not_null]
+      - name: eligible_enrollment_count
+        description: Enrollments with planned end before the cutoff.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 1}
+      - name: completed_count
+        description: Eligible enrollments with status abgeschlossen.
+      - name: abandoned_count
+        description: Eligible enrollments with status abgebrochen.
+      - name: other_status_count
+        description: Eligible enrollments in any other status.
+      - name: completed_share
+        description: completed_count / eligible_enrollment_count (0..1).
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: abandoned_share
+        description: abandoned_count / eligible_enrollment_count (0..1).
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: other_status_share
+        description: other_status_count / eligible_enrollment_count (0..1).
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: missing_participant_count
+        description: Eligible enrollments without a participant record.
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+
+  - name: rpt_progress_vs_time
+    description: |
+      **Question 3 (detail)**: curriculum progress versus elapsed planned time per active enrollment.
+      - **Grain / key**: one row per active enrollment (`enrollment_id`).
+      - **Sources**: `fct_enrollment_progress`, `dim_trainings`.
+      - **Definition**: progress = distinct completed modules / modules of the training (0 when no event); time progress = elapsed / planned days clamped to 0..1; gap = progress - time progress; behind schedule = gap <= -0.15.
+      - **Missing values**: gap and flag are NULL when dates are missing or the training has no modules (`time_progress_quality_flag`).
+    columns:
+      - name: enrollment_id
+        description: Active enrollment (grain).
+        data_tests: [not_null, unique]
+      - name: training_id
+        description: Booked training.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_trainings')
+                field: training_id
+      - name: training_name
+        description: Training display name.
+      - name: completed_module_count
+        description: Distinct completed modules.
+      - name: total_module_count
+        description: Modules of the training.
+      - name: completed_module_share
+        description: Curriculum progress 0..1.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: elapsed_days
+        description: Days from cohort start to the cutoff.
+      - name: planned_duration_days
+        description: Planned days from start to planned end.
+      - name: time_progress_share
+        description: Elapsed share of the planned duration, 0..1.
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: time_progress_quality_flag
+        description: ok, cohort_not_started, past_planned_end, missing_dates or non_positive_planned_duration.
+      - name: progress_gap
+        description: completed_module_share - time_progress_share.
+      - name: is_behind_schedule
+        description: progress_gap <= -0.15 (at least 15 percentage points behind).
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+
+  - name: rpt_progress_vs_time_summary
+    description: |
+      **Question 3 (aggregate)**: share of active enrollments that are at least 15 percentage points behind schedule.
+      - **Grain / key**: one row per `training_id` plus one overall row (`training_id = 'ALL'`, `is_total = true`).
+      - **Sources**: `rpt_progress_vs_time`.
+      - **Definition**: `behind_schedule_share` = behind_schedule_count / evaluable_active_enrollment_count (active enrollments whose gap can be computed). Averages ignore NULLs.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [training_id, reporting_date]
+    columns:
+      - name: training_id
+        description: Training or `ALL` for the overall row.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_trainings')
+                field: training_id
+              config: {where: "not is_total"}
+      - name: training_name
+        description: Training display name or `All trainings`.
+      - name: is_total
+        description: True for the overall row.
+      - name: active_enrollment_count
+        description: Active enrollments.
+      - name: evaluable_active_enrollment_count
+        description: Active enrollments with a computable progress gap.
+      - name: behind_schedule_count
+        description: Active enrollments with gap <= -0.15.
+      - name: behind_schedule_share
+        description: behind_schedule_count / evaluable_active_enrollment_count (0..1).
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: average_completed_module_share
+        description: Average curriculum progress (0..1).
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: average_time_progress_share
+        description: Average elapsed planned-time share (0..1).
+        data_tests:
+          - value_between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+
+  - name: rpt_nps_by_training_quarter
+    description: |
+      **Question 4**: Net Promoter Score per training and quarter from completion feedback.
+      - **Grain / key**: one row per (`training_id`, `feedback_quarter`).
+      - **Sources**: `int_feedback_nps`, `dim_trainings`.
+      - **Definition**: `nps = 100 * (promoters - detractors) / valid responses`; promoter 9-10, passive 7-8, detractor 0-6; only `abschlussfeedback` NPS answers with a valid whole score 0-10, submitted up to the cutoff; quarter = UTC quarter of the submission.
+      - **Missing / invalid values**: empty, malformed and out-of-range answers are excluded, never counted as 0.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [training_id, feedback_quarter]
+    columns:
+      - name: training_id
+        description: Training.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_trainings')
+                field: training_id
+      - name: training_name
+        description: Training display name.
+      - name: feedback_quarter
+        description: First day of the UTC quarter.
+        data_tests: [not_null]
+      - name: feedback_quarter_label
+        description: Quarter label such as 2026-Q1.
+      - name: valid_response_count
+        description: Valid NPS answers.
+      - name: promoter_count
+        description: Answers 9-10.
+      - name: passive_count
+        description: Answers 7-8.
+      - name: detractor_count
+        description: Answers 0-6.
+      - name: nps
+        description: Net Promoter Score in percent (-100..100).
+        data_tests:
+          - value_between:
+              arguments: {min_value: -100, max_value: 100}
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+
+  - name: rpt_coach_utilization
+    description: |
+      **Question 5 (per coach)**: active or paused enrollments per coach and how many are red.
+      - **Grain / key**: one row per `coach` of the latest workbook snapshot.
+      - **Sources**: `fct_coach_assignments` (latest snapshot).
+      - **Definition**: DISTINCT enrollments with status aktiv or pausiert that the coach is confidently assigned to; red = the coach's row for that enrollment has Ampel red. Ambiguous rows are reported in `ambiguous_assignment_count` and unmatched rows in `unmatched_enrollment_count`; neither counts as assigned.
+      - **Snapshot**: workbook business date 2026-09-01 vs cutoff 2026-08-31 (`snapshot_mismatch_flag`, documented limitation). `coach_snapshot_date` is the pipeline day of the snapshot.
+    columns:
+      - name: coach
+        description: Coach name (grain).
+        data_tests: [not_null, unique]
+      - name: active_or_paused_enrollment_count
+        description: Distinct aktiv/pausiert enrollments confidently assigned to the coach.
+      - name: red_enrollment_count
+        description: Of those, enrollments with Ampel red.
+      - name: unmatched_enrollment_count
+        description: Workbook rows of the coach that could not be linked to a participant.
+        data_tests:
+          - column_lte_column:
+              arguments:
+                other_column: workbook_row_count
+      - name: ambiguous_assignment_count
+        description: Workbook rows that stay ambiguous (not counted as assigned).
+      - name: workbook_row_count
+        description: All workbook rows of the coach in the snapshot.
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+      - name: coach_snapshot_date
+        description: Pipeline day of the latest coach snapshot.
+      - name: coach_snapshot_as_of_date
+        description: Business date of the workbook (2026-09-01).
+      - name: snapshot_mismatch_flag
+        description: Workbook date differs from the reporting date.
+
+  - name: rpt_coach_unassigned_enrollments
+    description: |
+      **Question 5 (summary row)**: how many active or paused enrollments have no confident coach assignment.
+      - **Grain / key**: exactly one row.
+      - **Sources**: `fct_enrollments`, `fct_coach_assignments` (latest snapshot).
+      - **Definition**: open = status aktiv or pausiert (CRM, current status). Assigned = at least one confident workbook row for the enrollment (counted once). Unassigned = the rest. Ambiguous and unmatched workbook rows are not treated as assigned and are reported separately.
+    columns:
+      - name: reporting_date
+        description: '{{ doc("col_reporting_date") }}'
+      - name: active_or_paused_enrollment_count
+        description: All aktiv/pausiert enrollments.
+      - name: assigned_active_or_paused_enrollment_count
+        description: Of those, enrollments with a confident coach assignment.
+      - name: unassigned_active_or_paused_enrollment_count
+        description: Of those, enrollments without a confident coach assignment.
+        data_tests:
+          - column_lte_column:
+              arguments:
+                other_column: active_or_paused_enrollment_count
+      - name: ambiguous_workbook_row_count
+        description: Workbook rows that stay ambiguous.
+      - name: unmatched_workbook_row_count
+        description: Workbook rows without any participant match.
+      - name: coach_snapshot_date
+        description: Pipeline day of the latest coach snapshot.
+      - name: coach_snapshot_as_of_date
+        description: Business date of the workbook (2026-09-01).
+      - name: snapshot_mismatch_flag
+        description: Workbook date differs from the reporting date.

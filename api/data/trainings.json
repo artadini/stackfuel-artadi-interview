@@ -1,0 +1,528 @@
+[
+  {
+    "training_id": "T01",
+    "training_name": "Data Analyst – Vollzeit",
+    "track": "Data Analyst",
+    "variant": "vollzeit",
+    "duration_weeks": 16,
+    "list_price_eur": 9900,
+    "is_active": true,
+    "modules": [
+      {
+        "module_id": "T01-M01",
+        "module_order": 1,
+        "module_name": "Onboarding & Data Literacy",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T01-M02",
+        "module_order": 2,
+        "module_name": "SQL Grundlagen",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T01-M03",
+        "module_order": 3,
+        "module_name": "SQL Advanced",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T01-M04",
+        "module_order": 4,
+        "module_name": "Python Grundlagen",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T01-M05",
+        "module_order": 5,
+        "module_name": "Datenaufbereitung mit pandas",
+        "estimated_hours": 16
+      },
+      {
+        "module_id": "T01-M06",
+        "module_order": 6,
+        "module_name": "Statistik",
+        "estimated_hours": 12
+      },
+      {
+        "module_id": "T01-M07",
+        "module_order": 7,
+        "module_name": "Datenvisualisierung",
+        "estimated_hours": 12
+      },
+      {
+        "module_id": "T01-M08",
+        "module_order": 8,
+        "module_name": "Dashboards mit Power BI",
+        "estimated_hours": 12
+      },
+      {
+        "module_id": "T01-M09",
+        "module_order": 9,
+        "module_name": "Praxisprojekt",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T01-M10",
+        "module_order": 10,
+        "module_name": "Abschlusspräsentation",
+        "estimated_hours": 8
+      }
+    ]
+  },
+  {
+    "training_id": "T02",
+    "training_name": "Data Analyst – Teilzeit",
+    "track": "Data Analyst",
+    "variant": "teilzeit",
+    "duration_weeks": 32,
+    "list_price_eur": 9900,
+    "is_active": true,
+    "modules": [
+      {
+        "module_id": "T02-M01",
+        "module_order": 1,
+        "module_name": "Onboarding & Data Literacy",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T02-M02",
+        "module_order": 2,
+        "module_name": "SQL Grundlagen",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T02-M03",
+        "module_order": 3,
+        "module_name": "SQL Advanced",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T02-M04",
+        "module_order": 4,
+        "module_name": "Python Grundlagen",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T02-M05",
+        "module_order": 5,
+        "module_name": "Datenaufbereitung mit pandas",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T02-M06",
+        "module_order": 6,
+        "module_name": "Statistik",
+        "estimated_hours": 20
+      },
+      {
+        "module_id": "T02-M07",
+        "module_order": 7,
+        "module_name": "Datenvisualisierung",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T02-M08",
+        "module_order": 8,
+        "module_name": "Dashboards mit Power BI",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T02-M09",
+        "module_order": 9,
+        "module_name": "Praxisprojekt",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T02-M10",
+        "module_order": 10,
+        "module_name": "Abschlusspräsentation",
+        "estimated_hours": 12
+      }
+    ]
+  },
+  {
+    "training_id": "T03",
+    "training_name": "Data Scientist – Vollzeit",
+    "track": "Data Scientist",
+    "variant": "vollzeit",
+    "duration_weeks": 20,
+    "list_price_eur": 12900,
+    "is_active": true,
+    "modules": [
+      {
+        "module_id": "T03-M01",
+        "module_order": 1,
+        "module_name": "Onboarding & Data Literacy",
+        "estimated_hours": 12
+      },
+      {
+        "module_id": "T03-M02",
+        "module_order": 2,
+        "module_name": "Python Grundlagen",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T03-M03",
+        "module_order": 3,
+        "module_name": "Datenaufbereitung mit pandas",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T03-M04",
+        "module_order": 4,
+        "module_name": "SQL",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T03-M05",
+        "module_order": 5,
+        "module_name": "Statistik & Wahrscheinlichkeit",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T03-M06",
+        "module_order": 6,
+        "module_name": "Explorative Datenanalyse",
+        "estimated_hours": 12
+      },
+      {
+        "module_id": "T03-M07",
+        "module_order": 7,
+        "module_name": "Machine Learning I",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T03-M08",
+        "module_order": 8,
+        "module_name": "Machine Learning II",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T03-M09",
+        "module_order": 9,
+        "module_name": "Deep Learning Grundlagen",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T03-M10",
+        "module_order": 10,
+        "module_name": "MLOps & Deployment",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T03-M11",
+        "module_order": 11,
+        "module_name": "Praxisprojekt",
+        "estimated_hours": 20
+      },
+      {
+        "module_id": "T03-M12",
+        "module_order": 12,
+        "module_name": "Abschlusspräsentation",
+        "estimated_hours": 12
+      }
+    ]
+  },
+  {
+    "training_id": "T04",
+    "training_name": "Data Scientist – Teilzeit",
+    "track": "Data Scientist",
+    "variant": "teilzeit",
+    "duration_weeks": 40,
+    "list_price_eur": 12900,
+    "is_active": true,
+    "modules": [
+      {
+        "module_id": "T04-M01",
+        "module_order": 1,
+        "module_name": "Onboarding & Data Literacy",
+        "estimated_hours": 20
+      },
+      {
+        "module_id": "T04-M02",
+        "module_order": 2,
+        "module_name": "Python Grundlagen",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T04-M03",
+        "module_order": 3,
+        "module_name": "Datenaufbereitung mit pandas",
+        "estimated_hours": 16
+      },
+      {
+        "module_id": "T04-M04",
+        "module_order": 4,
+        "module_name": "SQL",
+        "estimated_hours": 40
+      },
+      {
+        "module_id": "T04-M05",
+        "module_order": 5,
+        "module_name": "Statistik & Wahrscheinlichkeit",
+        "estimated_hours": 40
+      },
+      {
+        "module_id": "T04-M06",
+        "module_order": 6,
+        "module_name": "Explorative Datenanalyse",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T04-M07",
+        "module_order": 7,
+        "module_name": "Machine Learning I",
+        "estimated_hours": 40
+      },
+      {
+        "module_id": "T04-M08",
+        "module_order": 8,
+        "module_name": "Machine Learning II",
+        "estimated_hours": 40
+      },
+      {
+        "module_id": "T04-M09",
+        "module_order": 9,
+        "module_name": "Deep Learning Grundlagen",
+        "estimated_hours": 12
+      },
+      {
+        "module_id": "T04-M10",
+        "module_order": 10,
+        "module_name": "MLOps & Deployment",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T04-M11",
+        "module_order": 11,
+        "module_name": "Praxisprojekt",
+        "estimated_hours": 20
+      },
+      {
+        "module_id": "T04-M12",
+        "module_order": 12,
+        "module_name": "Abschlusspräsentation",
+        "estimated_hours": 16
+      }
+    ]
+  },
+  {
+    "training_id": "T05",
+    "training_name": "Data Engineer – Vollzeit",
+    "track": "Data Engineer",
+    "variant": "vollzeit",
+    "duration_weeks": 20,
+    "list_price_eur": 12900,
+    "is_active": true,
+    "modules": [
+      {
+        "module_id": "T05-M01",
+        "module_order": 1,
+        "module_name": "Onboarding & Data Literacy",
+        "estimated_hours": 16
+      },
+      {
+        "module_id": "T05-M02",
+        "module_order": 2,
+        "module_name": "Python Grundlagen",
+        "estimated_hours": 12
+      },
+      {
+        "module_id": "T05-M03",
+        "module_order": 3,
+        "module_name": "SQL & Datenmodellierung",
+        "estimated_hours": 12
+      },
+      {
+        "module_id": "T05-M04",
+        "module_order": 4,
+        "module_name": "Linux & Git",
+        "estimated_hours": 40
+      },
+      {
+        "module_id": "T05-M05",
+        "module_order": 5,
+        "module_name": "ETL mit Python",
+        "estimated_hours": 16
+      },
+      {
+        "module_id": "T05-M06",
+        "module_order": 6,
+        "module_name": "Data Warehousing",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T05-M07",
+        "module_order": 7,
+        "module_name": "Orchestrierung mit Airflow",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T05-M08",
+        "module_order": 8,
+        "module_name": "Cloud-Grundlagen (AWS)",
+        "estimated_hours": 20
+      },
+      {
+        "module_id": "T05-M09",
+        "module_order": 9,
+        "module_name": "Streaming & Kafka",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T05-M10",
+        "module_order": 10,
+        "module_name": "Data Quality & Testing",
+        "estimated_hours": 16
+      },
+      {
+        "module_id": "T05-M11",
+        "module_order": 11,
+        "module_name": "Praxisprojekt",
+        "estimated_hours": 40
+      },
+      {
+        "module_id": "T05-M12",
+        "module_order": 12,
+        "module_name": "Abschlusspräsentation",
+        "estimated_hours": 16
+      }
+    ]
+  },
+  {
+    "training_id": "T06",
+    "training_name": "Python für Data Analytics – Berufsbegleitend",
+    "track": "Python für Data Analytics",
+    "variant": "berufsbegleitend",
+    "duration_weeks": 12,
+    "list_price_eur": 2490,
+    "is_active": true,
+    "modules": [
+      {
+        "module_id": "T06-M01",
+        "module_order": 1,
+        "module_name": "Python Grundlagen",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T06-M02",
+        "module_order": 2,
+        "module_name": "Datenstrukturen",
+        "estimated_hours": 16
+      },
+      {
+        "module_id": "T06-M03",
+        "module_order": 3,
+        "module_name": "pandas",
+        "estimated_hours": 40
+      },
+      {
+        "module_id": "T06-M04",
+        "module_order": 4,
+        "module_name": "Visualisierung",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T06-M05",
+        "module_order": 5,
+        "module_name": "Automatisierung",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T06-M06",
+        "module_order": 6,
+        "module_name": "Praxisprojekt",
+        "estimated_hours": 20
+      }
+    ]
+  },
+  {
+    "training_id": "T07",
+    "training_name": "KI & Machine Learning Grundlagen – Berufsbegleitend",
+    "track": "KI & Machine Learning Grundlagen",
+    "variant": "berufsbegleitend",
+    "duration_weeks": 8,
+    "list_price_eur": 1890,
+    "is_active": true,
+    "modules": [
+      {
+        "module_id": "T07-M01",
+        "module_order": 1,
+        "module_name": "Was ist KI?",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T07-M02",
+        "module_order": 2,
+        "module_name": "Daten für ML",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T07-M03",
+        "module_order": 3,
+        "module_name": "Supervised Learning",
+        "estimated_hours": 20
+      },
+      {
+        "module_id": "T07-M04",
+        "module_order": 4,
+        "module_name": "Unsupervised Learning",
+        "estimated_hours": 8
+      },
+      {
+        "module_id": "T07-M05",
+        "module_order": 5,
+        "module_name": "KI im Unternehmen",
+        "estimated_hours": 24
+      }
+    ]
+  },
+  {
+    "training_id": "T08",
+    "training_name": "Business Intelligence mit Power BI – Vollzeit",
+    "track": "Business Intelligence mit Power BI",
+    "variant": "vollzeit",
+    "duration_weeks": 8,
+    "list_price_eur": 4900,
+    "is_active": true,
+    "modules": [
+      {
+        "module_id": "T08-M01",
+        "module_order": 1,
+        "module_name": "BI-Grundlagen",
+        "estimated_hours": 16
+      },
+      {
+        "module_id": "T08-M02",
+        "module_order": 2,
+        "module_name": "Power Query",
+        "estimated_hours": 40
+      },
+      {
+        "module_id": "T08-M03",
+        "module_order": 3,
+        "module_name": "Datenmodell & DAX I",
+        "estimated_hours": 32
+      },
+      {
+        "module_id": "T08-M04",
+        "module_order": 4,
+        "module_name": "DAX II",
+        "estimated_hours": 24
+      },
+      {
+        "module_id": "T08-M05",
+        "module_order": 5,
+        "module_name": "Visualisierung & Storytelling",
+        "estimated_hours": 40
+      },
+      {
+        "module_id": "T08-M06",
+        "module_order": 6,
+        "module_name": "Praxisprojekt",
+        "estimated_hours": 16
+      }
+    ]
+  }
+]
