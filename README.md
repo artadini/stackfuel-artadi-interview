@@ -1,5 +1,5 @@
 # Stackfuel Training Operations KPI Pipeline
-**Owner:** Nikolas Artadi | **Contact:** nikolas@artadini.eu | **Last updated:** 2026-10-06
+**Owner:** Nikolas Artadi | **Contact:** nikolas@artadini.eu | **Last updated:** 2026-10-07
 
 An end-to-end analytics pipeline that combines Stackfuel’s CRM, learning-platform API, and coach Excel workbook into five tested training-operations KPIs and a Streamlit dashboard.
 
