@@ -1,6 +1,6 @@
 # Stackfuel Training Operations KPI Pipeline
 
-**Owner:** Nikolas Artadi | **Contact:** nikolas@artadini.eu | **Last updated:** 2026-10-06
+**Owner:** Nikolas Artadi | **Contact:** nikolas@artadini.eu | **Last updated:** 2026-10-07
 
 Built an end-to-end analytics pipeline that combines data from Stackfuel’s CRM, learning platform API, and manually maintained coach Excel file into a tested, reproducible DuckDB model and weekly KPI report.
 
